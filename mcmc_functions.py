@@ -6,6 +6,8 @@ import math
 from scipy.stats import multivariate_normal, lognorm
 import seaborn as sns
 import re
+from collections import defaultdict
+
 
 
 # HELPER FUNCTIONS
@@ -47,9 +49,9 @@ def score_llk(home_score, away_score, home_strength, away_strength, home_advanta
 
 def nu(home_score, away_score, k):
     if home_score == 0:
-        return 1 + k * away_score
+        return 1.1 + k * away_score
     elif away_score == 0:
-        return 1 + k * home_score
+        return 1.1 + k * home_score
     else:
         return 1
     
@@ -330,7 +332,7 @@ def mcmc(seasons_df, start_year, end_year, burn_in = 1000, iterations = 5000, k 
         num_indices += 1
 
     for i in range(burn_in + iterations):
-        if np.random.uniform(0, 1) < 0.6: #strength proposal
+        if np.random.uniform(0, 1) < 0.8: #strength proposal
             year = np.random.randint(start_year, end_year + 1) #select random season
             if i >= burn_in:
                 acceptance_counters['Strength']['total'] += 1 #add to total iterations
@@ -937,7 +939,7 @@ def strength_histogram(strength_dict, teams, year, colours, bins=80):
 
     plt.xlabel("Strength")
     plt.ylabel("Density")
-    plt.title(f"Histogram of Strengths: {year}")
+    plt.title(f"Histogram of Strengths for {', '.join(teams)}: Season {year-1}-{year}")
     plt.legend()
     plt.grid(axis='y', linestyle='--', alpha=0.7)
     plt.tight_layout()
@@ -1161,7 +1163,6 @@ def convert_match_data(df):
     return df_converted
 
 def sample_season(new_season, strength_dict, year, parameters):
-    import random
     parameter_names = ['Home Advantage', 'Away Advantage', 'Eta', 'Sigma_S', 'Mu_P', 'Sigma_P']
     parameter_dict = {}
     strengths = random.choice(strength_dict[year])
@@ -1195,8 +1196,6 @@ def sample_season(new_season, strength_dict, year, parameters):
 
 
 def simulate_league_outcomes(new_season, strength_dict, year, parameters, num_simulations=1000, truncate=False):
-    from collections import defaultdict
-    import pandas as pd
 
     position_counts = defaultdict(lambda: defaultdict(int))
 
@@ -1231,8 +1230,147 @@ def simulate_league_outcomes(new_season, strength_dict, year, parameters, num_si
 
     return prob_df
 
+def simulate_match_outcomes(home_team, away_team, strength_dict, parameters, year, num_simulations, max_goals = 4):
+
+    strength_histories = get_season_strengths(strength_dict, year)
+
+    home_strengths = strength_histories.loc[
+        strength_histories['Team Name'] == home_team, 'Strength History'
+    ].values[0]
+    away_strengths = strength_histories.loc[
+        strength_histories['Team Name'] == away_team, 'Strength History'
+    ].values[0]
+
+    score_counts = defaultdict(lambda: defaultdict(int))
+
+    for _ in range(num_simulations):
+        home_strength = np.random.choice(home_strengths)
+        away_strength = np.random.choice(away_strengths)
+        home_adv = np.random.choice(parameters['Home Advantage'])
+        away_adv = np.random.choice(parameters['Away Advantage'])
+        home_goals, away_goals = sample_score(home_strength, away_strength, home_adv, away_adv)[0]
+
+        if home_goals <= max_goals and away_goals <= max_goals:
+            score_counts[home_goals][away_goals] += 1
+
+    # Create base index/columns
+    index = list(range(max_goals + 1))
+    data = []
+
+    for h in index:
+        row = []
+        for a in index:
+            prob = score_counts[h][a] / num_simulations
+            row.append(round(prob, 2))
+        data.append(row)
+
+    # Create DataFrame
+    df = pd.DataFrame(data, index=index, columns=index)
+
+    # Add labels with MultiIndex
+    df.columns = pd.MultiIndex.from_product([['Away Goals'], df.columns])
+    df.index.name = 'Home Goals'
+
+    return df
+
+    
+
+
 def insert_space(name):
     return re.sub(r'(?<!^)(?=[A-Z])', ' ', name)
 
 
+def goal_summary(df, start_year, end_year, max_goals=4):
+    df_all = df[(df['Season_End_Year'] >= start_year) & (df['Season_End_Year'] <= end_year)]
+    total_matches = len(df_all)
 
+    # Print average goals
+    avg_home_goals = df_all['HomeGoals'].mean()
+    avg_away_goals = df_all['AwayGoals'].mean()
+    print(f"Average Home Goals: {avg_home_goals:.2f}")
+    print(f"Average Away Goals: {avg_away_goals:.2f}")
+
+    # Compute marginals over full data
+    away_dist = df_all['AwayGoals'].value_counts(normalize=True).sort_index()
+    home_dist = df_all['HomeGoals'].value_counts(normalize=True).sort_index()
+
+    # Build the display subset: only goals within range for table output
+    table_data = []
+    ratio_data = []
+
+    for h in range(max_goals + 1):
+        row = []
+        ratio_row = []
+        for a in range(max_goals + 1):
+            p_joint = ((df_all['HomeGoals'] == h) & (df_all['AwayGoals'] == a)).sum() / total_matches
+            se_joint = np.sqrt(p_joint * (1 - p_joint) / total_matches)
+            row.append(f"{p_joint * 100:.1f} ({se_joint * 100:.2f})")
+
+            p_expected = home_dist.get(h, 0) * away_dist.get(a, 0)
+            ratio = p_joint / p_expected if p_expected > 0 else np.nan
+            se_ratio = se_joint / p_expected if p_expected > 0 else np.nan
+
+            ratio_row.append(f"{ratio:.2f} ({se_ratio:.2f})" if p_expected > 0 else "NA")
+        table_data.append(row)
+        ratio_data.append(ratio_row)
+
+    # Marginals
+    home_marginals = [
+        f"{home_dist.get(h, 0) * 100:.1f} ({np.sqrt(home_dist.get(h, 0) * (1 - home_dist.get(h, 0)) / total_matches) * 100:.2f})"
+        for h in range(max_goals + 1)
+    ]
+    away_marginals = [
+        f"{away_dist.get(a, 0) * 100:.1f} ({np.sqrt(away_dist.get(a, 0) * (1 - away_dist.get(a, 0)) / total_matches) * 100:.2f})"
+        for a in range(max_goals + 1)
+    ]
+
+    # Create main DataFrame
+    prob_df = pd.DataFrame(table_data, index=range(max_goals + 1), columns=range(max_goals + 1))
+    prob_df.insert(0, "", home_marginals)
+    prob_df.columns = pd.MultiIndex.from_arrays([
+        ["", "Away Goals"] + [""] * max_goals,
+        ["Home Goals"] + list(range(max_goals + 1))
+    ])
+    prob_df = pd.concat([pd.DataFrame([[""] + away_marginals], columns=prob_df.columns), prob_df], ignore_index=True)
+    prob_df.index = [""] + list(range(max_goals + 1))
+
+    # Ratio DataFrame
+    ratio_df = pd.DataFrame(ratio_data, index=range(max_goals + 1), columns=range(max_goals + 1))
+    ratio_df.insert(0, "", home_marginals)
+    ratio_df.columns = pd.MultiIndex.from_arrays([
+        ["", "Away Goals"] + [""] * max_goals,
+        ["Home Goals"] + list(range(max_goals + 1))
+    ])
+    ratio_df = pd.concat([pd.DataFrame([[""] + away_marginals], columns=ratio_df.columns), ratio_df], ignore_index=True)
+    ratio_df.index = [""] + list(range(max_goals + 1))
+
+    return prob_df, ratio_df
+
+
+def subtract_prob_dfs(prob_df1, prob_df2):
+    # Extract the numeric body only (exclude marginal rows and columns)
+    df1_body = prob_df1.iloc[1:, 1:].copy()
+    df2_body = prob_df2.iloc[1:, 1:].copy()
+
+    # Extract only the numeric part before the space (discard SE)
+    df1_numeric = df1_body.applymap(lambda s: float(s.split()[0]) if isinstance(s, str) else np.nan)
+    df2_numeric = df2_body.applymap(lambda s: float(s.split()[0]) if isinstance(s, str) else np.nan)
+
+    # Subtract and return a DataFrame
+    diff = df1_numeric - df2_numeric
+    diff.index = df1_body.index
+    diff.columns = df1_body.columns
+    return diff
+
+def summarise_parameters(full_parameters):
+
+    summary = []
+
+    for param, samples in full_parameters.items():
+        samples = np.array(samples)
+        mean = np.mean(samples)
+        std_err = np.std(samples, ddof=1) / np.sqrt(len(samples))  # Standard error
+        summary.append((param, f"{mean:.4f} ({std_err:.4f})"))
+
+    df = pd.DataFrame(summary, columns=["Parameter", "Mean (Std. Error)"])
+    return df
