@@ -1,0 +1,78 @@
+[tool.poetry]
+name = "httpstan"
+version = "4.13.0"
+description = "HTTP-based interface to Stan, a package for Bayesian inference."
+authors = [
+  "Allen Riddell <riddella@indiana.edu>",
+  "Ari Hartikainen <ahartikainen@users.noreply.github.com>",
+  "Matthew Carter <m.j.carter2@liverpool.ac.uk>",
+]
+license = "ISC"
+readme = "README.rst"
+homepage = "https://mc-stan.org"
+repository = "https://github.com/stan-dev/httpstan"
+documentation = "https://httpstan.readthedocs.io"
+build = "build.py"
+
+classifiers = [
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: ISC License (ISCL)",
+]
+# include: poetry automatically excludes paths mentioned in .gitignore, selectively add back
+include = [
+  "httpstan/*.o",
+  "httpstan/*.cpp",
+  "httpstan/lib/libsundials*",
+  "httpstan/lib/libtbb*",
+  "httpstan/stanc",
+  "httpstan/include/**/*",
+  "doc/openapi.yaml",
+]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+setuptools = ">=48.0"
+aiohttp = "^3.7"
+appdirs = "^1.4"
+webargs = "^8.0"
+marshmallow = "^3.10"
+numpy = ">=1.19"
+
+[tool.poetry.dev-dependencies]
+pytest = "^6.2"
+pytest-asyncio = "^0.15"
+apispec = {version = "^6.0", extras = ["yaml"]}
+autoflake = "^1.4"
+black = "22.3.0"
+isort = "^5.9"
+mypy = "0.981"
+flake8 = "^7.0.0"
+# documentation
+# NOTE: when changing these, update docs-requirements.txt
+sphinx = "^7.2"
+sphinx-autoapi = "^3.0.0"
+sphinx-rtd-theme = "^2.0.0"
+sphinxcontrib-openapi = "^0.8.4"
+sphinxcontrib-redoc = "^1.6"
+
+[tool.black]
+line-length = 119
+exclude = 'httpstan/include'
+
+[tool.isort]
+profile = "black"
+combine_as_imports = true
+known_first_party = "httpstan,tests"
+known_local_folder = "helpers"
+skip_glob = ['httpstan/include/*']
+
+[tool.coverage.run]
+branch = true
+omit = ["httpstan/__main__.py"]
+
+[tool.coverage.report]
+fail_under = 20
+
+[build-system]
+requires = ["setuptools", "poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
